@@ -4,12 +4,17 @@
     msg: Your new server passwords don't match or they're empty
   when: new_ssh_pass != new_ssh_pass2 or new_ssh_pass == ""
 
+- name: Ensure SSH Server Username is not root
+  fail:
+    msg: Set ssh_user to 'user' to correctly change 'root' login
+  when: ssh_user == 'root'
+
 - name: Create user list
   set_fact:
     ansible_ssh_users:
       - "{{ ssh_user }}"
       - root
-  when: ssh_user == "user" and ssh_pass|int == 123456
+  when: ssh_user == "user"
 
 - name: Set Facts
   set_fact:
@@ -64,19 +69,12 @@
   delegate_to: localhost
   become: "no"
 
-- name: "Set SSH Private Key Filename"
-  set_fact:
-    key_file: "{{ lookup('env','HOME') + '/.ssh/id_rsa' }}"
-  delegate_to: localhost
-  run_once: "true"
-  become: "no"
-
 - name: "Ensure SSH Private Key Exists"
   user:
     name: "{{ lookup('env','USER') }}"
     generate_ssh_key: "yes"
     ssh_key_bits: 2048
-    ssh_key_comment: "my key"
+    ssh_key_comment: "my_key"
     ssh_key_file: "{{ key_file }}"
   delegate_to: localhost
   run_once: "true"

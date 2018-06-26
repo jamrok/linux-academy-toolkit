@@ -2,3 +2,4 @@
 *.retry
 la_hosts.yml
 *.exp
+id_rsa*

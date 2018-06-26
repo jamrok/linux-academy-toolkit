@@ -1,17 +1,17 @@
 # change_linux_academy_server_password
 
   For all linux academy servers:
-  - Change any specified user's current SSH password to a new password (and for `root` if default creds given)
-  - Setup ssh keys for specified user (and for `root` if default creds given)
-  - Create or update static inventory file `la_hosts.yml` for use with ansible   
+  - Change any specified user's current SSH password to a new password (and for `root` if default user is given)
+  - Setup ssh keys for specified user (and for `root` if default user is given)
+  - Create or update static inventory file `la_hosts.yml` for use with ansible
 
 ## Task Summary
   - Ensure Linux Academy username is provided
   - Determine whether to use regular hostname or alternative names
   - Dynamically add to ansible hosts list from the local machine
   - Obtain SSH Username, Current Password and New Password
-  - Prepare to change password for provided user. 
-    - If default user (`user`) and password (`123456`) is given, also change creds for `root` user
+  - Prepare to change password for provided user.
+    - If default user (`user`) is given, also change creds for `root` user
   - Get IP for each host
   - Get Remote Host Key (ignore security implications, assume host is safe)
   - Add Remote Host Key to Known Hosts File
@@ -58,7 +58,13 @@
     - default: no
     - required: yes
 
-  - `ssh_user` - SSH username whose password will be changed 
+  - `default_key` - Use default ssh key `~/.ssh/id_rsa`? If not, use separate key file `./id_rsa_la_servers`
+    - permitted values: y/yes/n/no
+    - type: bool
+    - default: yes
+    - required: yes
+
+  - `ssh_user` - SSH username whose password will be changed. Also changes the `root` user's creds when `user` is given.
     - permitted values: user, root, etc
     - type: string
     - default: 'user'
@@ -106,7 +112,7 @@ Note: Always include `localhost` because hosts are added dynamically from the `l
 ### Basic usage with some verbosity and all field provided (no prompts, please change new_ssh_pass)
 
   ```bash
-  ansible-playbook change_linux_academy_server_password.yml -vv --diff -e "user=la-username suffix=n ssh_user=user ssh_pass=123456 new_ssh_pass2={{new_ssh_pass}}" -e new_ssh_pass= #<--remove_space_set_pass
+  ansible-playbook change_linux_academy_server_password.yml -vv --diff -e "user=la-username suffix=n default_key=y ssh_user=user ssh_pass=123456 new_ssh_pass2={{new_ssh_pass}}" -e new_ssh_pass= #<--remove_space_set_pass
 ```
 
 ### After everything runs successfully, verify you can run ansible as regular user and as root
