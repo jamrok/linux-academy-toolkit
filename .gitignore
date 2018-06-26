@@ -1,0 +1,4 @@
+*.sw[op]
+*.retry
+la_hosts.yml
+*.exp

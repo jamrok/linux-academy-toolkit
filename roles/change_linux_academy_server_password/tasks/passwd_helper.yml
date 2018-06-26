@@ -1,0 +1,166 @@
+---
+- name: "Set Facts for [{{ loop_ssh_user }}]"
+  set_fact:
+    ansible_ssh_user: "{{ loop_ssh_user }}"
+    ansible_ssh_pass: "{{ ssh_pass }}"
+    expect_script:
+      "{{ playbook_dir }}/{{ inventory_hostname }}-{{ loop_ssh_user }}.exp"
+  no_log: "True"
+
+- name: "Set facts for root user"
+  set_fact:
+    ansible_ssh_extra_args: "-o PubkeyAuthentication=yes"
+  when: ansible_ssh_user == 'root'
+
+- name: "Verify connectivity with old password for [{{ ansible_ssh_user }}]"
+  ping:
+  register: pingtest
+  ignore_errors: "yes"
+
+- name: "Show password connectivity check result for [{{ ansible_ssh_user }}]"
+  debug:
+    msg: "{{ pingtest }}"
+  failed_when: pingtest.ping is undefined
+  ignore_errors: "yes"
+
+- name: "Try with Public Key Auth if Password Auth
+        Failed for [{{ ansible_ssh_user }}]"
+  block:
+    - name: "Enable Public Key Auth"
+      set_fact:
+        ansible_ssh_extra_args: "-o PubkeyAuthentication=yes"
+
+    - name: "Verify pubkey connectivity for [{{ ansible_ssh_user }}]"
+      ping:
+      ignore_errors: "yes"
+      register: pingtest2
+
+    - name: "Show pubkey connectivity check result for [{{ ansible_ssh_user }}]"
+      debug:
+        msg: "{{ pingtest2 }}"
+      failed_when: pingtest2.ping is undefined
+      ignore_errors: "yes"
+  when: pingtest.ping is undefined and pingtest.module_stderr is defined and not
+      'Your password has expired.' in pingtest.module_stderr
+      and ansible_ssh_user != 'root'
+
+- name: Update pingtest variable
+  set_fact:
+    pingtest: "{{ pingtest2 }}"
+  when: pingtest2.skipped is undefined
+
+- name: "Run expect if we can connect for [{{ ansible_ssh_user }}]"
+  block:
+    - name: "Generate Password Change Expect Script for [{{ ansible_ssh_user }}]"
+      copy:
+        dest: "{{ expect_script }}"
+        mode: u+x
+        content: |
+          #!/usr/bin/expect
+          set timeout 10
+          set host "{{ inventory_hostname }}"
+          set username "{{ ansible_ssh_user }}"
+          set password "{{ ansible_ssh_pass }}"
+          set new_password "{{ new_ssh_pass }}"
+          spawn ssh -tt {{ ansible_ssh_extra_args }} \
+            "$username\@$host" "sudo passwd {{ ansible_ssh_user }}"
+          expect {
+            # ssh password
+            "s password:" { send "$password\n"; exp_continue }
+            # user's current password
+            "*curr*password:" { send "$password\n" ; exp_continue ; }
+            # user's new password
+            -re "(Enter|New).*pass.*:" { send "$new_password\n" ; exp_continue }
+            # re-enter new password
+            "*Retype*password:" { send "$new_password\n" ; exp_continue }
+            # "show any issues with password (eg. new password weak)"
+            "*password:"
+          }
+      delegate_to: localhost
+      become: "no"
+
+    - name: "Run expect script to update password for [{{ ansible_ssh_user }}]"
+      command: "{{ expect_script }}"
+      delegate_to: localhost
+      become: "no"
+      ignore_errors: "yes"
+      register: expect_run
+      failed_when: "'successful' not in expect_run.stdout"
+
+    - name: "Remove expect script for [{{ ansible_ssh_user }}]"
+      file:
+        name: "{{ expect_script }}"
+        state: absent
+      delegate_to: localhost
+      become: "no"
+
+    - name: Check if Password was Changed
+      fail:
+        msg: "Error changing password. Maybe check old/new passwords."
+      failed_when: "'successful' not in expect_run.stdout"
+
+  # 'when' for block above
+  when: >
+    ( pingtest.module_stderr is defined and
+      'Your password has expired.' in pingtest.module_stderr )
+    or ( pingtest.ping is defined )
+
+- name: "Set fact with new SSH Pass for [{{ ansible_ssh_user }}]"
+  set_fact:
+    ansible_ssh_pass: "{{ new_ssh_pass }}"
+    ansible_become_pass: "{{ new_ssh_pass }}"
+  no_log: "True"
+
+- name: "Verify connectivity with new password for [{{ ansible_ssh_user }}]"
+  ping:
+  ignore_errors: "yes"
+  register: pingtest
+
+- name: "Show connectivity check result for [{{ ansible_ssh_user }}]"
+  debug:
+    msg: "{{ pingtest }}"
+  failed_when: pingtest.ping is undefined
+
+- name: "Finalize config if we can connect for [{{ ansible_ssh_user }}]"
+  block:
+    - name: "Add ssh-key for [{{ ansible_ssh_user }}]"
+      authorized_key:
+        user: "{{ item }}"
+        state: present
+        key: "{{ lookup('file', lookup('env','HOME') + '/.ssh/id_rsa.pub') }}"
+      become: "yes"
+      with_items:
+        - "{{ ansible_ssh_userlist }}"
+
+    - name: "Create/Update static inventory file for [{{ ansible_ssh_user }}]"
+      lineinfile:
+        dest: "{{ inventory_file }}"
+        # hard-coding 'user' in inventory since it's the main user
+        regexp: '^{{ server_prefix }}'
+        line: "{{ inventory_hostname }} ansible_user=user"
+        create: "yes"
+      delegate_to: localhost
+      become: "no"
+      register: static_inv
+      # To fix parallel localhost same file operation
+      retries: 3
+      until: not static_inv.changed
+
+    - name: "Update sudoers file for {{ ansible_ssh_user }} without password"
+      lineinfile:
+        path: /etc/sudoers
+        regexp: '^{{ ansible_ssh_user }}\s'
+        line: '{{ ansible_ssh_user }} ALL=(ALL) NOPASSWD: ALL'
+        validate: 'visudo -cf %s'
+        state: present
+      become: "yes"
+      when: ansible_ssh_user != 'root'
+
+    - name: "Show success report for [{{ ansible_ssh_user }}]"
+      debug:
+        msg: >-
+         New password and ssh key have been setup for [{{ ansible_ssh_user }}].
+         Update static inventory [{{ inventory_file | basename }}] as needed
+         (create Groups, Nested Groups, etc).
+  # 'when' for block
+  when: pingtest.ping is defined
