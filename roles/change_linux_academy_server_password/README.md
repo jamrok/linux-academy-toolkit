@@ -37,7 +37,18 @@
   - None
 
 ## Requirements
-  - **Ansible**: >= 2.5.2.0
+  - **Ansible**: <= 2.5.5
+    - Minimum verified version: 2.4.0.0
+    - A bug in 2.6.0 is breaking functionality (if old password is incorrect).
+      - Workaround:
+        Update your `ansible/plugins/connection/ssh.py` as follows:
+```
+          -        except (OSError, IOError):
+          -            raise AnsibleConnectionFailure('SSH Error: data could not be sent to remote host "%s". Make sure this host can be reached over ssh' % self.host)
+          +        except (OSError, IOError) as e:
+          +            if (e.errno != errno.EPIPE):
+          +                raise AnsibleConnectionFailure('SSH Error: data could not be sent to remote host "%s". Make sure this host can be reached over ssh' % self.host)
+```
   - Requires local root: no
 
 ## Compatibility
