@@ -1,0 +1,89 @@
+---
+- name: Ensure Linux Academy server passwords match
+  fail:
+    msg: Your new server passwords don't match or they're empty
+  when: new_ssh_pass != new_ssh_pass2 or new_ssh_pass == ""
+
+- name: Ensure SSH Server Username is not root
+  fail:
+    msg: Set ssh_user to 'user' to correctly change 'root' login
+  when: ssh_user == 'root'
+
+- name: Create user list
+  set_fact:
+    ansible_ssh_users:
+      - "{{ ssh_user }}"
+      - root
+  when: ssh_user == "user"
+
+- name: Set Facts
+  set_fact:
+    ansible_ssh_userlist: "{{ ansible_ssh_users | default(ssh_user) }}"
+    ansible_ssh_pass: "{{ ssh_pass }}"
+    ansible_become_pass: "{{ ssh_pass }}"
+    inventory_file: "{{ playbook_dir }}/la_hosts.yml"
+  no_log: "True"
+
+- name: Get IP for each host
+  register: dig
+  command: dig +noall +short {{ inventory_hostname }}
+  become: "no"
+  check_mode: "no"
+  changed_when: "False"
+  failed_when: >-
+    (not (dig.stdout_lines[-1]|ipaddr)
+      if 'stdout_lines' in dig
+      and dig.stdout_lines|length > 0 else True)
+    and dig.rc == 0
+  delegate_to: localhost
+
+- name: Extract IP address
+  set_fact:
+    host_ip: "{{ dig.stdout_lines[-1]
+                 if 'stdout_lines' in dig
+                   and dig.stdout_lines|length > 0
+                 else 'No ip' }}"
+
+- name: Get Remote Host Key - I'm trusting this is NOT a bad guy ;-)
+  shell: >
+      ssh-keyscan -T5 -t ecdsa {{ inventory_hostname }},{{ host_ip }}
+  register: remote_hostkey
+  delegate_to: localhost
+  become: "no"
+  check_mode: "no"
+
+- name: Verify Host Key Retrieval
+  fail:
+    msg: >-
+      "Failed to retrieve host key for {{ inventory_hostname }}
+      {{ host_ip }}. Check if the IP in Linux Academy matches.
+      If not, clear local dns caching services, stop and start the servers
+      and/or run the playbook and toggle the alternative server names option."
+  when: remote_hostkey.stdout == ""
+
+- name: Add Remote Host Key to Known Hosts File
+  known_hosts:
+    path: ~/.ssh/known_hosts
+    name: "{{ inventory_hostname }}"
+    key: "{{ remote_hostkey.stdout }}"
+  delegate_to: localhost
+  become: "no"
+
+- name: "Ensure SSH Private Key Exists"
+  user:
+    name: "{{ lookup('env','USER') }}"
+    generate_ssh_key: "yes"
+    ssh_key_bits: 2048
+    ssh_key_comment: "my_key"
+    ssh_key_file: "{{ key_file }}"
+  delegate_to: localhost
+  run_once: "true"
+  become: "no"
+
+- name: Change Password on Remote Servers
+  include_tasks: passwd_helper.yml
+  with_items:
+    - "{{ ansible_ssh_userlist }}"
+  loop_control:
+    loop_var: loop_ssh_user
+...

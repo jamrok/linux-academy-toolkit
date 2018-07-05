@@ -1,2 +1,2 @@
 # linux-academy-toolkit
-Helpful tools when working with linux academy environment
+Helpful tools and ansible playbooks for working with linux academy environment.
